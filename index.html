@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meyden OBS Live Tool — Cabaret des Curiosités</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+  <style>
+    :root {
+      --bg: #050505;
+      --panel: rgba(14, 14, 14, 0.92);
+      --panel2: rgba(255,255,255,0.055);
+      --orange: #ff6a00;
+      --green: #22c55e;
+      --red: #ef4444;
+      --text: #f5f5f5;
+      --muted: #a8a8a8;
+      --line: rgba(255,255,255,0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(255,106,0,.20), transparent 35%),
+        radial-gradient(circle at bottom right, rgba(120,0,0,.30), transparent 42%),
+        #050505;
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .page {
+      width: min(1320px, 94vw);
+      margin: auto;
+      padding: 28px 0 42px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: center;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0;
+      text-transform: uppercase;
+      letter-spacing: -1px;
+      font-size: clamp(28px, 4vw, 56px);
+      line-height: .95;
+    }
+
+    h1 span { color: var(--orange); }
+
+    .subtitle {
+      color: var(--muted);
+      margin: 8px 0 0;
+      font-size: 16px;
+    }
+
+    .status {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 13px 18px;
+      min-width: 210px;
+      text-align: center;
+      background: var(--panel);
+      font-weight: 900;
+      text-transform: uppercase;
+      box-shadow: 0 0 30px rgba(255,106,0,.12);
+    }
+
+    .status.waiting { color: var(--orange); }
+    .status.live { color: var(--green); }
+    .status.error { color: var(--red); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1.7fr .85fr;
+      gap: 22px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: 0 20px 80px rgba(0,0,0,.42);
+    }
+
+    .player {
+      position: relative;
+      aspect-ratio: 16/9;
+      background: #000;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: block;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 24px;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,.45), rgba(0,0,0,.88)),
+        radial-gradient(circle, rgba(255,106,0,.18), transparent 48%);
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    .overlay.hidden { display: none; }
+    .overlay:focus-visible {
+      outline: 3px solid var(--orange);
+      outline-offset: -6px;
+    }
+
+    .dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 999px;
+      background: var(--orange);
+      box-shadow: 0 0 0 rgba(255,106,0,.65);
+      animation: pulse 1.5s infinite;
+      margin-bottom: 20px;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(255,106,0,.65); }
+      70% { box-shadow: 0 0 0 28px rgba(255,106,0,0); }
+      100% { box-shadow: 0 0 0 0 rgba(255,106,0,0); }
+    }
+
+    .overlay .eyebrow {
+      color: var(--orange);
+      letter-spacing: 3px;
+      font-weight: 900;
+      text-transform: uppercase;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+
+    .overlay h2 {
+      margin: 0;
+      text-transform: uppercase;
+      font-size: clamp(28px, 5vw, 70px);
+      line-height: .92;
+    }
+
+    .overlay p {
+      max-width: 720px;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: clamp(14px, 1.6vw, 20px);
+    }
+
+    .bar {
+      padding: 14px 18px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(255,106,0,.07);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .bar strong { color: var(--orange); }
+
+    .side {
+      display: grid;
+      gap: 22px;
+    }
+
+    .inner { padding: 22px; }
+
+    h3 {
+      margin: 0 0 14px;
+      font-size: 20px;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 7px;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 800;
+    }
+
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,.36);
+      color: var(--text);
+      border-radius: 15px;
+      padding: 13px 14px;
+      outline: none;
+      font-size: 14px;
+    }
+
+    textarea { min-height: 76px; resize: vertical; }
+
+    button, .button {
+      width: 100%;
+      border: 0;
+      border-radius: 16px;
+      padding: 15px 18px;
+      margin-top: 10px;
+      background: var(--orange);
+      color: #111;
+      font-weight: 950;
+      text-transform: uppercase;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    button.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+    button.danger { background: rgba(239,68,68,.18); color: #fff; border: 1px solid rgba(239,68,68,.38); }
+
+    .mini {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin: 10px 0 0;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .step {
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+      font-size: 14px;
+    }
+
+    .step strong { color: var(--text); }
+
+    .countdown {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .timebox {
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 8px;
+      text-align: center;
+    }
+
+    .timebox b { display: block; color: var(--orange); font-size: 24px; }
+    .timebox small { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+
+    @media (max-width: 920px) {
+      header { flex-direction: column; align-items: flex-start; }
+      .status { width: 100%; }
+      .layout { grid-template-columns: 1fr; }
+      .countdown { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <h1>Meyden <span>OBS Live Tool</span></h1>
+        <p class="subtitle">Outil de diffusion compatible OBS — Cabaret des Curiosités / Meyden Metal</p>
+      </div>
+      <div id="status" class="status waiting">Signal en attente</div>
+    </header>
+
+    <section class="layout">
+      <div class="card">
+        <div class="player">
+          <video id="video" controls playsinline muted autoplay></video>
+          <div id="overlay" class="overlay" role="button" tabindex="0" aria-label="Relancer la lecture du direct">
+            <div class="dot"></div>
+            <div class="eyebrow">Réception du signal OBS</div>
+            <h2>En attente du live</h2>
+            <p id="overlayText">Configure OBS avec ton serveur RTMP. Dès que le flux HLS est disponible, cette app peut lancer la diffusion dans le moniteur.</p>
+          </div>
+        </div>
+        <div class="bar">
+          <span><strong>État :</strong> <span id="signalText">Aucun flux chargé.</span></span>
+          <span id="clock">--:--:--</span>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="card">
+          <div class="inner">
+            <h3>Lecture du flux OBS</h3>
+
+            <label>URL HLS produite par ton serveur</label>
+            <input id="hlsUrl" placeholder="https://ton-domaine.com/hls/stream.m3u8" />
+
+            <button onclick="saveAndLoad()">Sauvegarder + charger le live</button>
+        <button class="secondary" onclick="restartPlayback()">Relancer la lecture</button>
+            <button class="danger" onclick="stopStream()">Couper le moniteur</button>
+
+            <p class="mini">Cette app lit un flux HLS .m3u8. OBS doit envoyer son signal vers un serveur RTMP/HLS comme Owncast, Nginx RTMP, Mux, Cloudflare Stream ou LiveKit.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="inner">
+            <h3>Lancement automatique</h3>
+            <div class="countdown">
+              <div class="timebox"><b id="d">00</b><small>jours</small></div>
+              <div class="timebox"><b id="h">00</b><small>heures</small></div>
+              <div class="timebox"><b id="m">00</b><small>min</small></div>
+              <div class="timebox"><b id="s">00</b><small>sec</small></div>
+            </div>
+            <button class="secondary" onclick="armAutoStart()">Armer l’automatisation</button>
+            <p class="mini">L’app vérifie le flux à l’heure prévue et tente de démarrer la lecture automatiquement.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="inner">
+            <h3>Constructeur d’URL HLS</h3>
+
+            <label>Domaine du serveur live</label>
+            <input id="domainInput" placeholder="live.meyden.ca" />
+
+            <label>Nom du live / Stream Key</label>
+            <input id="streamKeyInput" placeholder="meyden-metal-30mai" />
+
+            <button onclick="generateUrls()">Générer la configuration OBS</button>
+
+            <label>RTMP Server</label>
+            <textarea id="rtmpOutput" readonly></textarea>
+
+            <label>Stream Key</label>
+            <textarea id="streamKeyOutput" readonly></textarea>
+
+            <label>URL HLS (.m3u8)</label>
+            <textarea id="hlsOutput" readonly></textarea>
+
+            <button class="secondary" onclick="useGeneratedHls()">Utiliser cette URL HLS dans le lecteur</button>
+
+            <p class="mini">Cet outil génère automatiquement les informations nécessaires pour connecter OBS à ton système de diffusion Meyden.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="inner">
+            <h3>Réglages OBS</h3>
+            <div class="steps">
+              <div class="step"><strong>1.</strong> OBS → Settings → Stream.</div>
+              <div class="step"><strong>2.</strong> Service : Custom.</div>
+              <div class="step"><strong>3.</strong> Server : ton URL RTMP. Exemple : rtmp://ton-domaine.com/live</div>
+              <div class="step"><strong>4.</strong> Stream Key : la clé définie dans ton serveur.</div>
+              <div class="step"><strong>5.</strong> Ton serveur transforme le signal en HLS .m3u8 pour cette app.</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    // Date du show. Ajustable.
+    const SHOW_START_TIME = new Date("2026-05-30T19:30:00-04:00").getTime();
+
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const overlayText = document.getElementById('overlayText');
+    const statusEl = document.getElementById('status');
+    const signalText = document.getElementById('signalText');
+    const hlsInput = document.getElementById('hlsUrl');
+    let hls = null;
+    let autoArmed = false;
+
+    hlsInput.value = localStorage.getItem('meyden_obs_hls_url') || '';
+
+    function setStatus(type, text, signal) {
+      statusEl.className = 'status ' + type;
+      statusEl.textContent = text;
+      signalText.textContent = signal || text;
+    }
+
+    function saveAndLoad() {
+      localStorage.setItem('meyden_obs_hls_url', hlsInput.value.trim());
+      loadStream(true);
+    }
+
+    function resetVideo() {
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
+
+    async function tryPlay(userInitiated = false) {
+      try {
+        await video.play();
+        onLive();
+        return true;
+      } catch (error) {
+        onPlaybackError(error, userInitiated);
+        return false;
+      }
+    }
+
+    async function restartPlayback() {
+      if (video.currentSrc || video.getAttribute('src')) {
+        if (await tryPlay(true)) return;
+      }
+
+      loadStream(true);
+    }
+
+    function loadStream(userInitiated = false) {
+      const url = (hlsInput.value || localStorage.getItem('meyden_obs_hls_url') || '').trim();
+
+      if (!url || !url.includes('.m3u8')) {
+        overlay.classList.remove('hidden');
+        overlayText.textContent = 'Colle une URL HLS valide qui se termine normalement par .m3u8.';
+        setStatus('error', 'URL HLS manquante', 'Aucune URL .m3u8 valide.');
+        return;
+      }
+
+      if (window.location.protocol === 'https:' && /^http:\/\//i.test(url)) {
+        overlay.classList.remove('hidden');
+        overlayText.textContent = 'Cette régie est en HTTPS, mais le flux Owncast est en HTTP. Chrome bloque ce mélange. Utilise une adresse HLS HTTPS, par exemple https://live.meyden.ca/hls/stream.m3u8.';
+        setStatus('error', 'HTTPS requis', 'Utilise une URL HLS en HTTPS depuis la régie Vercel.');
+        return;
+      }
+
+      resetVideo();
+      overlay.classList.remove('hidden');
+      overlayText.textContent = 'Connexion au flux OBS en cours...';
+      setStatus('waiting', 'Connexion...', 'Tentative de chargement du flux HLS.');
+
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        video.load();
+        tryPlay(userInitiated);
+        return;
+      }
+
+      if (window.Hls && Hls.isSupported()) {
+        hls = new Hls({
+          liveSyncDurationCount: 3,
+          maxLiveSyncPlaybackRate: 1.5,
+          enableWorker: true
+        });
+
+        hls.loadSource(url);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+          tryPlay(userInitiated);
+        });
+
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          if (data.fatal) {
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              hls.startLoad();
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hls.recoverMediaError();
+            } else {
+              onStreamError();
+            }
+          }
+        });
+      } else {
+        setStatus('error', 'Navigateur incompatible', 'Ce navigateur ne supporte pas HLS.js ou HLS natif.');
+      }
+    }
+
+    function onLive() {
+      overlay.classList.add('hidden');
+      setStatus('live', 'Live actif', 'Le signal OBS est diffusé dans l’app.');
+    }
+
+    function onPlaybackError() {
+      overlay.classList.remove('hidden');
+      overlayText.textContent = 'Le flux est chargé. Appuie ici ou sur « Relancer la lecture » pour démarrer.';
+      setStatus('waiting', 'Lecture manuelle requise', 'Appuie sur le panneau vidéo ou sur « Relancer la lecture ».');
+    }
+
+    function onStreamError() {
+      overlay.classList.remove('hidden');
+      overlayText.textContent = 'Le signal n’est pas encore disponible ou le serveur HLS refuse la connexion.';
+      setStatus('error', 'Signal indisponible', 'Erreur HLS : vérifie OBS, Owncast et l’URL .m3u8.');
+    }
+
+    function stopStream() {
+      resetVideo();
+      overlay.classList.remove('hidden');
+      overlayText.textContent = 'Moniteur coupé. Le flux peut être relancé manuellement.';
+      setStatus('waiting', 'Signal en attente', 'Moniteur arrêté.');
+    }
+
+    function generateUrls() {
+      const domain = document.getElementById('domainInput').value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const key = document.getElementById('streamKeyInput').value.trim();
+
+      if (!domain || !key) {
+        setStatus('error', 'Informations manquantes', 'Entre un domaine et un nom de live valide.');
+        return;
+      }
+
+      const host = domain.split('/')[0];
+      const isIpAddress = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+      const rtmp = `rtmp://${host}:1935/live`;
+      const hls = isIpAddress
+        ? `http://${host}:8080/hls/stream.m3u8`
+        : `https://${host}/hls/stream.m3u8`;
+
+      document.getElementById('rtmpOutput').value = rtmp;
+      document.getElementById('streamKeyOutput').value = key;
+      document.getElementById('hlsOutput').value = hls;
+
+      setStatus('waiting', 'Configuration générée', 'Les URL OBS/HLS ont été générées automatiquement.');
+    }
+
+    function useGeneratedHls() {
+      const hlsUrl = document.getElementById('hlsOutput').value.trim();
+
+      if (!hlsUrl) {
+        setStatus('error', 'Aucune URL HLS', 'Génère une configuration avant d’utiliser le flux.');
+        return;
+      }
+
+      hlsInput.value = hlsUrl;
+      localStorage.setItem('meyden_obs_hls_url', hlsUrl);
+      loadStream(true);
+    }
+
+    function armAutoStart() {
+      autoArmed = true;
+      setStatus('waiting', 'Automatisation armée', 'L’app lancera le flux à l’heure programmée.');
+    }
+
+    function tick() {
+      const now = Date.now();
+      const distance = SHOW_START_TIME - now;
+
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString('fr-CA');
+
+      if (distance <= 0) {
+        document.getElementById('d').textContent = '00';
+        document.getElementById('h').textContent = '00';
+        document.getElementById('m').textContent = '00';
+        document.getElementById('s').textContent = '00';
+        if (autoArmed) {
+          autoArmed = false;
+          loadStream();
+        }
+        return;
+      }
+
+      const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((distance / (1000 * 60 * 60)) % 24);
+      const minutes = Math.floor((distance / (1000 * 60)) % 60);
+      const seconds = Math.floor((distance / 1000) % 60);
+
+      document.getElementById('d').textContent = String(days).padStart(2, '0');
+      document.getElementById('h').textContent = String(hours).padStart(2, '0');
+      document.getElementById('m').textContent = String(minutes).padStart(2, '0');
+      document.getElementById('s').textContent = String(seconds).padStart(2, '0');
+    }
+
+    tick();
+    setInterval(tick, 1000);
+
+    overlay.addEventListener('click', restartPlayback);
+    overlay.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        restartPlayback();
+      }
+    });
+
+    video.addEventListener('playing', onLive);
+  </script>
+</body>
+  </html>
