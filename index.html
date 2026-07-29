@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta name="theme-color" content="#050505">
 
-<title>Meyden Live Régie V2</title>
+<title>Meyden Live Régie V2.1</title>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 
@@ -403,7 +403,7 @@ button,
 
   <header>
     <div>
-      <h1>Meyden <span>Live Régie V2</span></h1>
+      <h1>Meyden <span>Live Régie V2.1</span></h1>
 
       <p class="subtitle">
         Surveillance centrale — Meyden Live Studio • MediaMTX • Owncast
@@ -488,7 +488,7 @@ button,
             <a
               id="openOwncastBtn"
               class="button secondary"
-              href="https://live-147-182-151-74.sslip.io/owncast/"
+              href="https://owncast-147-182-151-74.sslip.io/"
               target="_blank"
               rel="noopener">
               Ouvrir Owncast
@@ -602,25 +602,30 @@ button,
             id="gatewayBase"
             value="https://live-147-182-151-74.sslip.io">
 
+          <label>Base HTTPS Owncast</label>
+
+          <input
+            id="owncastBase"
+            value="https://owncast-147-182-151-74.sslip.io">
+
           <label>URL HLS Owncast</label>
 
           <input
             id="hlsUrl"
-            value="https://live-147-182-151-74.sslip.io/owncast/hls/stream.m3u8">
+            value="https://owncast-147-182-151-74.sslip.io/hls/stream.m3u8">
 
           <label>API Owncast</label>
 
           <input
             id="statusUrl"
-            value="https://live-147-182-151-74.sslip.io/owncast/api/status">
+            value="https://owncast-147-182-151-74.sslip.io/api/status">
 
           <button onclick="saveConfig()">
             Sauvegarder
           </button>
 
           <div class="notice" style="margin-top:10px">
-            Caddy doit exposer Owncast sous
-            <strong>/owncast/</strong>.
+            MediaMTX et Owncast utilisent maintenant deux adresses HTTPS distinctes afin d’éviter les conflits de chemins HLS.
           </div>
 
         </div>
@@ -653,6 +658,7 @@ const signalText = document.getElementById('signalText');
 const hlsInput = document.getElementById('hlsUrl');
 const statusInput = document.getElementById('statusUrl');
 const gatewayInput = document.getElementById('gatewayBase');
+const owncastInput = document.getElementById('owncastBase');
 
 let hls = null;
 let liveStartedAt = null;
@@ -661,12 +667,24 @@ let monitorStopped = false;
 
 const STORE = 'meyden_live_regie_v2';
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, function(character) {
+    return {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    }[character];
+  });
+}
+
 function log(message, type = 'INFO') {
   const box = document.getElementById('log');
 
   box.innerHTML +=
     `[${new Date().toLocaleTimeString('fr-CA')}] ` +
-    `${type} — ${message}<br>`;
+    `${escapeHtml(type)} — ${escapeHtml(message)}<br>`;
 
   box.scrollTop = box.scrollHeight;
 }
@@ -698,6 +716,7 @@ function resetVideo() {
 function config() {
   return {
     gateway: gatewayInput.value.trim().replace(/\/$/, ''),
+    owncast: owncastInput.value.trim().replace(/\/$/, ''),
     hls: hlsInput.value.trim(),
     status: statusInput.value.trim()
   };
@@ -710,7 +729,7 @@ function saveConfig() {
   );
 
   document.getElementById('openOwncastBtn').href =
-    config().gateway + '/owncast/';
+    config().owncast + '/';
 
   log('Configuration sauvegardée.', 'OK');
 
@@ -726,6 +745,9 @@ function loadConfig() {
     if (saved) {
       gatewayInput.value =
         saved.gateway || gatewayInput.value;
+
+      owncastInput.value =
+        saved.owncast || owncastInput.value;
 
       hlsInput.value =
         saved.hls || hlsInput.value;
@@ -829,12 +851,21 @@ async function testStatus() {
       data.viewers ??
       '—';
 
-    return (
+    const rawOnline =
       data.online ??
       data.isOnline ??
       data.live ??
-      null
-    );
+      null;
+
+    if (rawOnline === true || rawOnline === 1 || rawOnline === 'true') {
+      return true;
+    }
+
+    if (rawOnline === false || rawOnline === 0 || rawOnline === 'false') {
+      return false;
+    }
+
+    return null;
 
   } catch (error) {
 
@@ -851,24 +882,17 @@ async function testStatus() {
 async function testHls() {
   try {
     const response = await fetchWithTimeout(
-      config().hls,
-      {
-        headers: {
-          Range: 'bytes=0-200'
-        }
-      },
-      5500
+      config().hls + (config().hls.includes('?') ? '&' : '?') + '_=' + Date.now(),
+      { method: 'GET' },
+      6500
     );
+
+    if (!response.ok) {
+      return false;
+    }
 
     const content = await response.text();
-
-    return (
-      response.ok &&
-      (
-        content.includes('#EXTM3U') ||
-        config().hls.includes('.m3u8')
-      )
-    );
+    return content.trimStart().startsWith('#EXTM3U');
 
   } catch (error) {
     return false;
@@ -897,6 +921,10 @@ async function playVideo() {
 
 function loadStream() {
   if (monitorStopped) {
+    return;
+  }
+
+  if (video.currentSrc && !video.paused && !video.ended) {
     return;
   }
 
@@ -941,9 +969,28 @@ function loadStream() {
     hls.on(
       Hls.Events.ERROR,
       function(event, data) {
-        if (data.fatal) {
-          onOffline();
+        if (!data.fatal) {
+          return;
         }
+
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          log('Erreur réseau HLS; nouvelle tentative automatique.', 'INFO');
+          setTimeout(() => {
+            if (!monitorStopped && hls) {
+              hls.startLoad();
+            }
+          }, 2500);
+          return;
+        }
+
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          log('Erreur média HLS; récupération automatique.', 'INFO');
+          hls.recoverMediaError();
+          return;
+        }
+
+        log('Erreur HLS irrécupérable.', 'ERREUR');
+        onOffline();
       }
     );
   }
@@ -1017,18 +1064,17 @@ async function checkEverything(
   const hlsAvailable = await testHls();
 
   if (hlsAvailable) {
-
-    if (
-      forceLoad ||
-      !video.currentSrc
-    ) {
+    if (forceLoad || !video.currentSrc) {
       loadStream();
     }
-
-  } else if (
-    online === false ||
-    online === null
-  ) {
+  } else if (online === true) {
+    setStatus(
+      'waiting',
+      'Initialisation du flux',
+      'Owncast est en ligne; le manifeste HLS est en préparation.'
+    );
+    badge('owncastBadge', 'warn', 'Préparation HLS');
+  } else {
     onOffline();
   }
 
@@ -1147,7 +1193,7 @@ loadConfig();
 document.getElementById(
   'openOwncastBtn'
 ).href =
-  config().gateway + '/owncast/';
+  config().owncast + '/';
 
 setInterval(
   updateClock,
